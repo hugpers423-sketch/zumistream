@@ -1,0 +1,529 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  SUPER_RESELLER
+  SUB_RESELLER
+  PROVIDER
+  CUSTOMER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  SUSPENDED
+  TRIAL
+  PENDING_PAYMENT
+}
+
+enum TransactionType {
+  CREDIT_PURCHASE
+  CREDIT_TRANSFER
+  SUBSCRIPTION_CREATE
+  SUBSCRIPTION_RENEW
+  SUBSCRIPTION_UPGRADE
+  COMMISSION_EARNED
+  COMMISSION_PAID
+  WITHDRAWAL
+  REFUND
+  TRIAL_USED
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+enum ProviderType {
+  XTREAM_CODES
+  M3U
+  XTREAM_UI
+  CUSTOM
+}
+
+enum SocialPlatform {
+  WHATSAPP
+  INSTAGRAM
+  TIKTOK
+  FACEBOOK
+  TELEGRAM
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum CommissionType {
+  PERCENTAGE
+  FIXED_AMOUNT
+  TIERED
+}
+
+model User {
+  id                String             @id @default(cuid())
+  email             String             @unique
+  passwordHash      String
+  fullName          String
+  phone             String?
+  role              UserRole           @default(CUSTOMER)
+  status            UserStatus         @default(PENDING_VERIFICATION)
+  avatar            String?
+  
+  // Hierarchy
+  parentId          String?
+  parent            User?              @relation("UserHierarchy", fields: [parentId], references: [id])
+  children          User[]             @relation("UserHierarchy")
+  
+  // Reseller specific
+  credits           Decimal            @default(0) @db.Decimal(10, 2)
+  totalCreditsPurchased Decimal        @default(0) @db.Decimal(10, 2)
+  commissionRate    Decimal            @default(0) @db.Decimal(5, 2)
+  commissionType    CommissionType     @default(PERCENTAGE)
+  maxSubResellers   Int                @default(0)
+  allowedProviders  String[]           @default([])
+  
+  // Provider specific
+  providerType      ProviderType?
+  providerConfig    Json?
+  providerApiUrl    String?
+  providerApiKey    String?
+  
+  // Social Commerce
+  whatsappNumber    String?
+  whatsappBusinessId String?
+  instagramBusinessId String?
+  tiktokShopId      String?
+  facebookPageId    String?
+  socialConfig      Json?
+  
+  // Branding
+  brandName         String?
+  brandLogo         String?
+  brandColors       Json?
+  customDomain      String?
+  whiteLabelEnabled Boolean            @default(false)
+  
+  // Settings
+  twoFactorEnabled  Boolean            @default(false)
+  twoFactorSecret   String?
+  emailNotifications Boolean           @default(true)
+  smsNotifications  Boolean            @default(false)
+  language          String             @default("es")
+  timezone          String             @default("America/Mexico_City")
+  
+  // Tracking
+  lastLoginAt       DateTime?
+  lastLoginIp       String?
+  emailVerifiedAt   DateTime?
+  phoneVerifiedAt   DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  
+  // Relations
+  subscriptions       Subscription[]
+  transactions        Transaction[]    @relation("UserTransactions")
+  sentTransactions    Transaction[]    @relation("SentTransactions")
+  receivedTransactions Transaction[]   @relation("ReceivedTransactions")
+  commissions         Commission[]     @relation("UserCommissions")
+  paidCommissions     Commission[]     @relation("PaidCommissions")
+  orders              Order[]
+  socialMessages      SocialMessage[]
+  apiKeys             ApiKey[]
+  auditLogs           AuditLog[]
+  notifications       Notification[]
+  supportTickets      SupportTicket[]  @relation("UserTickets")
+  assignedTickets     SupportTicket[]  @relation("AssignedTickets")
+  
+  @@index([parentId])
+  @@index([role])
+  @@index([status])
+  @@index([email])
+}
+
+model Provider {
+  id              String        @id @default(cuid())
+  name            String
+  type            ProviderType  @default(XTREAM_CODES)
+  apiUrl          String
+  apiKey          String
+  apiSecret       String?
+  username        String?
+  password        String?
+  
+  // Configuration
+  maxConnections  Int           @default(1)
+  trialEnabled    Boolean       @default(true)
+  trialDuration   Int           @default(24) // hours
+  trialLimitPerDay Int          @default(10)
+  
+  // Content
+  channelsCount   Int           @default(0)
+  vodCount        Int           @default(0)
+  seriesCount     Int           @default(0)
+  countries       String[]      @default([])
+  categories      String[]      @default([])
+  
+  // Pricing (wholesale)
+  pricePerCredit  Decimal       @db.Decimal(10, 4)
+  minCredits      Int           @default(1)
+  creditPackages  Json          @default("[]")
+  
+  // Status
+  isActive        Boolean       @default(true)
+  isTestMode      Boolean       @default(false)
+  uptime          Decimal       @default(100) @db.Decimal(5, 2)
+  lastSyncAt      DateTime?
+  lastError       String?
+  
+  // Branding
+  logo            String?
+  description     String?
+  
+  // Relations
+  users           User[]        @relation("ProviderUsers")
+  subscriptions   Subscription[]
+  providerLogs    ProviderLog[]
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  @@index([isActive])
+  @@index([type])
+}
+
+model Subscription {
+  id              String             @id @default(cuid())
+  username        String             @unique
+  password        String
+  status          SubscriptionStatus @default(PENDING_PAYMENT)
+  
+  // Duration
+  durationMonths  Int                @default(1)
+  connections     Int                @default(1)
+  expiresAt       DateTime
+  trialUsed       Boolean            @default(false)
+  
+  // Content access
+  bouquetIds      String[]           @default([])
+  allowedCountries String[]          @default([])
+  allowedCategories String[]         @default([])
+  maxConnections  Int                @default(1)
+  allowedOutputFormats String[]      @default(["m3u8", "ts"])
+  
+  // Device management
+  macAddress      String?
+  deviceId        String?
+  deviceType      String?
+  allowedIps      String[]           @default([])
+  
+  // Credits
+  creditsUsed     Decimal            @db.Decimal(10, 2)
+  
+  // Relations
+  userId          String
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resellerId      String?
+  reseller        User?              @relation("ResellerSubscriptions", fields: [resellerId], references: [id])
+  providerId      String
+  provider        Provider           @relation(fields: [providerId], references: [id])
+  providerLineId  String?
+  
+  // M3U/Playlist
+  m3uUrl          String?
+  xtreamUrl       String?
+  
+  // Tracking
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  activatedAt     DateTime?
+  lastUsedAt      DateTime?
+  lastIp          String?
+  
+  @@index([userId])
+  @@index([resellerId])
+  @@index([providerId])
+  @@index([status])
+  @@index([expiresAt])
+  @@index([username])
+}
+
+model Transaction {
+  id              String            @id @default(cuid())
+  type            TransactionType
+  status          TransactionStatus @default(PENDING)
+  amount          Decimal           @db.Decimal(12, 2)
+  currency        String            @default("USD")
+  description     String?
+  metadata        Json              @default("{}")
+  
+  // References
+  userId          String
+  user            User              @relation("UserTransactions", fields: [userId], references: [id])
+  fromUserId      String?
+  fromUser        User?             @relation("SentTransactions", fields: [fromUserId], references: [id])
+  toUserId        String?
+  toUser          User?             @relation("ReceivedTransactions", fields: [toUserId], references: [id])
+  subscriptionId  String?
+  subscription    Subscription?     @relation(fields: [subscriptionId], references: [id])
+  orderId         String?
+  order           Order?            @relation(fields: [orderId], references: [id])
+  
+  // Payment
+  paymentMethod   String?
+  paymentReference String?
+  gatewayResponse Json?
+  
+  // Tracking
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  completedAt     DateTime?
+  
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+  @@index([paymentReference])
+}
+
+model Commission {
+  id              String          @id @default(cuid())
+  type            CommissionType  @default(PERCENTAGE)
+  rate            Decimal         @db.Decimal(5, 2)
+  amount          Decimal         @db.Decimal(12, 2)
+  status          TransactionStatus @default(PENDING)
+  level           Int             @default(1) // 1 = direct, 2 = sub-reseller, etc.
+  
+  // References
+  userId          String
+  user            User            @relation("UserCommissions", fields: [userId], references: [id])
+  fromUserId      String
+  fromUser        User            @relation("PaidCommissions", fields: [fromUserId], references: [id])
+  transactionId   String?
+  transaction     Transaction?    @relation(fields: [transactionId], references: [id])
+  subscriptionId  String?
+  subscription    Subscription?   @relation(fields: [subscriptionId], references: [id])
+  orderId         String?
+  order           Order?          @relation(fields: [orderId], references: [id])
+  
+  // Tracking
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  paidAt          DateTime?
+  
+  @@index([userId])
+  @@index([fromUserId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Order {
+  id              String        @id @default(cuid())
+  orderNumber     String        @unique
+  status          OrderStatus   @default(PENDING)
+  totalAmount     Decimal       @db.Decimal(12, 2)
+  currency        String        @default("USD")
+  items           Json          @default("[]")
+  metadata        Json          @default("{}")
+  
+  // Customer
+  customerId      String?
+  customer        User?         @relation(fields: [customerId], references: [id])
+  customerEmail   String
+  customerName    String
+  customerPhone   String?
+  
+  // Reseller
+  resellerId      String?
+  reseller        User?         @relation(fields: [resellerId], references: [id])
+  
+  // Social Commerce
+  platform        SocialPlatform?
+  platformOrderId String?
+  conversationId  String?
+  
+  // Payment
+  paymentMethod   String?
+  paymentStatus   String        @default("pending")
+  paymentReference String?
+  
+  // Tracking
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  completedAt     DateTime?
+  shippedAt       DateTime?
+  
+  @@index([customerId])
+  @@index([resellerId])
+  @@index([status])
+  @@index([orderNumber])
+  @@index([platform])
+  @@index([createdAt])
+}
+
+model SocialMessage {
+  id              String          @id @default(cuid())
+  platform        SocialPlatform
+  direction       String          // inbound, outbound
+  messageType     String          // text, image, template, interactive, order
+  content         Json            @default("{}")
+  status          String          @default("sent") // sent, delivered, read, failed
+  
+  // References
+  userId          String
+  user            User            @relation(fields: [userId], references: [id])
+  conversationId  String
+  contactId       String?
+  contactName     String?
+  contactPhone    String?
+  
+  // Order relation
+  orderId         String?
+  order           Order?          @relation(fields: [orderId], references: [id])
+  
+  // Tracking
+  externalId      String?
+  sentAt          DateTime?
+  deliveredAt     DateTime?
+  readAt          DateTime?
+  createdAt       DateTime        @default(now())
+  
+  @@index([userId])
+  @@index([conversationId])
+  @@index([platform])
+  @@index([createdAt])
+}
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  name        String
+  keyHash     String   @unique
+  keyPrefix   String
+  permissions String[] @default([])
+  rateLimit   Int      @default(1000)
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+  isActive    Boolean  @default(true)
+  
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([keyHash])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  action      String
+  entityType  String
+  entityId    String
+  oldData     Json?
+  newData     Json?
+  ipAddress   String?
+  userAgent   String?
+  
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  
+  createdAt   DateTime @default(now())
+  
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  type        String
+  title       String
+  message     String
+  data        Json     @default("{}")
+  isRead      Boolean  @default(false)
+  readAt      DateTime?
+  
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime @default(now())
+  
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+model SupportTicket {
+  id          String   @id @default(cuid())
+  subject     String
+  description String
+  status      String   @default("open") // open, in_progress, resolved, closed
+  priority    String   @default("medium") // low, medium, high, urgent
+  category    String   @default("general")
+  
+  userId      String
+  user        User     @relation("UserTickets", fields: [userId], references: [id])
+  assignedToId String?
+  assignedTo  User?    @relation("AssignedTickets", fields: [assignedToId], references: [id])
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  resolvedAt  DateTime?
+  closedAt    DateTime?
+  
+  @@index([userId])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model ProviderLog {
+  id          String   @id @default(cuid())
+  action      String
+  status      String
+  request     Json?
+  response    Json?
+  error       String?
+  duration    Int?
+  
+  providerId  String
+  provider    Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime @default(now())
+  
+  @@index([providerId])
+  @@index([createdAt])
+}
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json
+  category  String
+  description String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
