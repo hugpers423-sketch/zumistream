@@ -4,7 +4,7 @@
   "description": "Backend API for Streaming Reseller Platform with multi-level hierarchy",
   "main": "src/index.js",
   "type": "module",
-  "scripts": {
+  "scripts": {"build": "vite build"
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
     "build": "prisma generate",
